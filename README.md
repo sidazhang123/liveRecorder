@@ -1,7 +1,7 @@
 # liveRecorder
 根据个人需求修改，基于https://github.com/ihmily/DouyinLiveRecorder。仅适合个人用途、少量低频监控、小服务器部署(1c2g)。
 
-重整代码，去除个人不需要的功能。使用时间线串联监控扫描顺序，每个直播间指定独立的监测时间段和扫描循环间隔(见config/URL_config.ini注释)。
+重整代码，去除个人不需要的功能，仅保留支持douyin kuaishou weibo。使用时间线串联监控扫描顺序，每个直播间指定独立的监测时间段和扫描循环间隔(见config/URL_config.ini注释)。
 
 感谢 https://github.com/ihmily/DouyinLiveRecorder (@ihmily)提供基础框架
 
