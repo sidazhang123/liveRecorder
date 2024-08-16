@@ -13,9 +13,7 @@ from typing import Union, Dict, Any
 import requests
 from DrissionPage import ChromiumPage, ChromiumOptions
 
-from utils import (
-    trace_error_decorator
-)
+from utils import trace_error_decorator, logger
 from web_rid import get_sec_user_id
 
 no_proxy_handler = urllib.request.ProxyHandler({})
@@ -152,7 +150,6 @@ def get_douyin_app_stream_data(url: str, proxy_addr: Union[str, None] = None, co
                     room_data['stream_url']['hls_pull_url_map'] = {**origin_m3u8, **hls_pull_url_map}
                     room_data['stream_url']['flv_pull_url'] = {**origin_flv, **flv_pull_url}
     except Exception as e:
-        print(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
         room_data = {'anchor_name': ""}
     return room_data
 
@@ -209,16 +206,16 @@ def get_douyin_stream_data(url: str, proxy_addr: Union[str, None] = None, cookie
         return json_data
 
     except Exception as e:
-        print(f'第一次获取数据失败：{url} 准备切换解析方法{e}')
+        logger.info(f'【dy】第一次获取数据失败：{url} ')
         return get_douyin_app_stream_data(url=url, proxy_addr=proxy_addr, cookies=cookies)
 
 
 @trace_error_decorator
-def get_kuaishou_stream_url(eid) :
+def get_kuaishou_stream_url(eid):
     global ks_retry
-    if ks_retry>2:
-        print('快手重试3次依然出错')
-        ks_retry=0
+    if ks_retry > 2:
+        logger.error('【ks】{eid} 快手重试3次依然出错')
+        ks_retry = 0
         return None
     co = ChromiumOptions().headless()
     co.set_argument('--blink-settings=imagesEnabled=false')  # 禁用加载图片
@@ -251,48 +248,47 @@ def get_kuaishou_stream_url(eid) :
     page.quit()
     if not match:
         ks_retry += 1
-        print('[ks]html中无法找到json')
+        logger.error(f'【ks】eid={eid},html中无法找到json')
         time.sleep(ks_retry * 5 + ks_retry_wait_time)
         return get_kuaishou_stream_url(eid)
     # 获取匹配的 JSON 数据
     json_data_str = match.group(1)
-    json_data_str=re.sub(r'(\\u[a-zA-Z0-9]{4})',lambda x:x.group(1).encode("utf-8").decode("unicode-escape"),json_data_str)
-    json_data_str=json_data_str.replace(':undefined',':"undefined"')
-    print(json_data_str)
+    json_data_str = re.sub(r'(\\u[a-zA-Z0-9]{4})', lambda x: x.group(1).encode("utf-8").decode("unicode-escape"),
+                           json_data_str)
+    json_data_str = json_data_str.replace(':undefined', ':"undefined"')
     json_data = json.loads(json_data_str)
 
     # 将 JSON 数据转换为 Python 对象
 
-    playList = json_data.get('liveroom',{}).get('playList',[None])[-1]
+    playList = json_data.get('liveroom', {}).get('playList', [None])[-1]
     if not playList:
-        ks_retry+=1
-        print('[ks]json->liveroom->playList失败')
-        time.sleep(ks_retry*5+ks_retry_wait_time)
+        ks_retry += 1
+        logger.error('【ks】eid={eid},json->liveroom->playList失败')
+        time.sleep(ks_retry * 5 + ks_retry_wait_time)
         return get_kuaishou_stream_url(eid)
     # 获取anchor_name
-    anchor_name = playList.get('author',{}).get('name','')
+    anchor_name = playList.get('author', {}).get('name', '')
     anchor_name = re.sub(r'[^\u4e00-\u9fa5a-zA-Z]', '', anchor_name)
 
-
     # 获取playUrls
-    playUrls=playList.get('liveStream',{}).get('playUrls',[])
-    if len(playUrls)==0:
+    playUrls = playList.get('liveStream', {}).get('playUrls', [])
+    if len(playUrls) == 0:
         return {
             "anchor_name": anchor_name,
             "is_live": False,
             "record_url": ''
         }
-    repr = playUrls[0].get('adaptationSet',{}).get('representation',[])
-    if len(repr)==0:
-        ks_retry+=1
-        print('[ks]representation列表为空或获取异常')
-        time.sleep(ks_retry*5+ks_retry_wait_time)
+    repr = playUrls[0].get('adaptationSet', {}).get('representation', [])
+    if len(repr) == 0:
+        ks_retry += 1
+        logger.error('【ks】eid={eid},representation列表为空或获取异常')
+        time.sleep(ks_retry * 5 + ks_retry_wait_time)
         return get_kuaishou_stream_url(eid)
-    stream_url = repr[0].get('url','')
+    stream_url = repr[0].get('url', '')
 
     return {
         "anchor_name": anchor_name,
-        "is_live": True if len(stream_url.strip())>0 else False,
+        "is_live": True if len(stream_url.strip()) > 0 else False,
         "record_url": stream_url
     }
 

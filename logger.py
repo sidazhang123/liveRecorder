@@ -1,27 +1,25 @@
 # -*- coding: utf-8 -*-
-
 import os
 import sys
-
 from loguru import logger
 
 script_path = os.path.split(os.path.realpath(sys.argv[0]))[0]
-# logger.add(
-#     f"{script_path}/logs/PlayURL.log",
-#     level="INFO",
-#     format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}",
-#     filter=lambda i: i["level"].name == "INFO",
-#     serialize=False,
-#     enqueue=True,
-#     retention=1,
-#     rotation="300 KB",
-# )
-
 logger.add(
-    f"{script_path}/logs/LiveRecorder.log",
-    level="WARNING",
+    f"{script_path}/logs/info.log",
+    level="INFO",
+    format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}",
     serialize=False,
     enqueue=True,
-    retention=1,
-    rotation="100 KB",
+    retention="10 days",
+    rotation="700 KB",
+)
+
+logger.add(
+    f"{script_path}/logs/error.log",
+    level="ERROR",
+    serialize=False,
+    format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}",
+    enqueue=False,
+    retention="10 days",
+    rotation="500 KB",
 )

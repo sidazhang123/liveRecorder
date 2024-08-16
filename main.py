@@ -1,9 +1,4 @@
 # -*- encoding: utf-8 -*-
-#根据个人需求修改，基于https://github.com/ihmily/DouyinLiveRecorder。不适合“代录”商业目的，不适合大量高频监控，适合个人小服务器部署。
-#重整代码逻辑，去除个人不需要的功能、循环、方法。每个直播间指定独立的扫描监测时间段和扫描循环间隔。
-#感谢 https://github.com/ihmily/DouyinLiveRecorder (@ihmily)提供基础框架（快手无法解决）
-#感谢 https://github.com/ihmily/DouyinLiveRecorder/issues/86 (@18202821297)指出快手的模拟方式
-#感谢 https://hyb.life/ 提供滑块验证码缺口识别（虽然没用上...）
 from __future__ import annotations
 
 import configparser
@@ -26,8 +21,8 @@ from spider import (
     get_kuaishou_stream_url,
     get_weibo_stream_data,
 )
-from utils import logger, trace_error_decorator
-
+from utils import  trace_error_decorator
+from logger import logger
 
 class ThreadSafeSet:
     def __init__(self):
@@ -90,31 +85,30 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 def display_info(disp_interval: int):
     if len(video_save_path) > 0 and not os.path.exists(video_save_path):
-        print("配置文件里,直播保存路径并不存在,请重新输入一个正确的路径.或留空表示当前目录,按回车退出")
-        input("程序结束")
+        logger.error("【config.ini】'直播保存路径（不填则默认）'路径不存在，留空使用默认值/liverRecorder/downloads。退出")
         sys.exit(0)
     time.sleep(20)
     while True:
         try:
             now_time = datetime.now()
-            print(f"监测{monitoring.size()}个直播中", end=" | ")
+            if 1<=now_time.hour<=10: continue
+
             rec_size = recording.size()
-            print(f"{rec_size}个正在录像", end=" | ")
+            lg = f"【扫描】监测{monitoring.size()}个直播中|{rec_size}个正在录像|"
             if rec_size > 0:
                 for recording_live in recording:
                     author_name, start_rec_time = recording_live
                     rec_elapsed = now_time - start_rec_time
                     hours, remainder = divmod(rec_elapsed.seconds, 3600)
                     minutes, seconds = divmod(remainder, 60)
-                    print(f"[{author_name}] 已录{hours:02d}:{minutes:02d}:{seconds:02d}", end=" | ")
-            print(f"目前瞬时错误数为: {warning_count}", end=" | ")
-            print(f"当前时间: {now_time.strftime('%m-%d %H:%M:%S')}")
+                    lg += f"[{author_name}] 已录{hours:02d}:{minutes:02d}:{seconds:02d}|"
+            lg += f"目前错误数为: {warning_count}"
+            logger.info(lg)
         except Exception as e:
-            logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+            logger.error(f"【错误信息】{e} 发生错误的行数: {e.__traceback__.tb_lineno}")
         time.sleep(disp_interval)
 
 
-#仅用于url_config.ini对不合法的行前加#跳过
 def update_file(file_path: str, old_str: str, new_str: str, start_str: str = None):
     # 如果待更新的new_str 和 已有的 old_str 没区别，并且 不需要使用注释(start_str)，则直接返回
     if old_str == new_str and start_str is None:
@@ -164,13 +158,11 @@ def change_max_connect():
                 else:
                     preset = 1
 
-            # print("同一时间访问网络的线程数动态改为", max_request)
             warning_count = 0
             time.sleep(5)
 
         elif 20 < warning_count:
             max_request = 1
-            # print("同一时间访问网络的线程数动态改为", max_request)
             warning_count = 0
             time.sleep(10)
 
@@ -178,7 +170,6 @@ def change_max_connect():
             max_request = preset
             warning_count = 0
             start_time = time.time()
-            # print("同一时间访问网络的线程数动态改为", max_request)
 
 
 @trace_error_decorator
@@ -256,7 +247,7 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
     monitoring_set.add(record_url)
     interruption_prob = False
     count_time = time.time()
-    print(f"[{author_name}] 开始监控@{time.strftime('%m-%d %H:%M:%S', time.localtime())}")
+    logger.info(f"【扫描】{author_name} 开始监控")
     while True:
         rec_triggered = False
         # 获取串流地址（检测是否开播）、推送开关播信息、录制开始
@@ -277,7 +268,7 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
                         url=record_url, cookies=weibo_cookie)
                     port_info = get_stream_url(json_data, record_quality, extra_key='m3u8_url')
             else:
-                logger.error(f'{record_url} 未知直播地址')
+                logger.error(f'【URLconfig.ini】{record_url} 未知直播地址')
                 monitoring_set.discard(record_url)
                 return
             # anchor_name仅用来检测获取成功与否，不改了。但主播名字用从配置文件中获取的author_name替代
@@ -287,17 +278,17 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
             # 开关播推送信息
             push_at = datetime.today().strftime('%m-%d %H:%M:%S')
             if port_info['is_live'] is False:
-                print(f"{author_name} 未开播，等待中... ")
+                logger.info(f"【扫描】{author_name} 未开播，等待中... ")
                 if start_pushed and over_show_push:
                     push_content = f"直播间状态更新：[直播间名称] 直播已结束！时间：[时间]"
                     push_content = push_content.replace('[直播间名称]', author_name).replace('[时间]',
                                                                                              push_at)
                     push_pts = push_message(push_content.replace(r'\n', '\n'))
                     if push_pts:
-                        print(f'提示信息：已经将[{author_name}]直播状态消息推送至你的{push_pts}')
+                        logger.info(f'【推送】已推送[{author_name}]下播状态')
                 start_pushed = False
             else:
-                print(f"{author_name} 开播啦 ")
+                logger.info(f"【扫描】{author_name} 开播啦 ")
                 if live_status_push and not start_pushed:
                     if begin_show_push:
                         push_content = f"直播间状态更新：[直播间名称] 正在直播中，时间：[时间]"
@@ -305,7 +296,7 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
                                                                                                  push_at)
                         push_pts = push_message(push_content.replace(r'\n', '\n'))
                         if push_pts:
-                            print(f'提示信息：已经将[{author_name}]直播状态消息推送至你的{push_pts}')
+                            logger.info(f'【推送】已推送[{author_name}]开播状态')
                     start_pushed = True
             # 开始录像
             if port_info['is_live'] is True:
@@ -329,10 +320,10 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
                     if not os.path.exists(full_path):
                         os.makedirs(full_path)
                 except Exception as e:
-                    logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+                    logger.error(f"【错误信息】{e} 发生错误的行数: {e.__traceback__.tb_lineno}")
                 if not os.path.exists(full_path):
                     logger.error(
-                        "错误信息: 保存路径不存在,不能生成录制.请避免把本程序放在c盘,桌面,下载文件夹,qq默认传输目录.请重新检查设置")
+                        f"【错误信息】{full_path}生成的录像保存路径不存在，检查URLconfig.ini填写的主播名及main.py 311-317行处理逻辑")
                 # ffmpeg参数
                 user_agent = ("Mozilla/5.0 (Linux; Android 11; SAMSUNG SM-G973U) AppleWebKit/537.36 ("
                               "KHTML, like Gecko) SamsungBrowser/14.2 Chrome/87.0.4280.141 Mobile "
@@ -430,14 +421,14 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
                     _output = subprocess.check_output(ffmpeg_command, stderr=subprocess.STDOUT)
                     rec_triggered = True
                     interruption_prob = False
-                    print(f"\n{author_name} {time.strftime('%m-%d %H:%M:%S')} 直播录制完成\n")
+                    logger.info(f"【录像】{author_name} 直播录制完成")
                     recording.discard(rec_name_time)
                 except subprocess.CalledProcessError as e:
                     logger.error(
-                        f"{author_name} {time.strftime('%m-%d %H:%M:%S')} 直播录制出错\n{e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+                        f"【录像】{author_name} 直播录制出错\n{e} 发生错误的行数: {e.__traceback__.tb_lineno}")
                     warning_count += 1
         except Exception as e:
-            logger.error(f"错误信息: {e} 发生错误的行数: {e.__traceback__.tb_lineno}")
+            logger.error(f"【错误信息】{e} 发生错误的行数: {e.__traceback__.tb_lineno}")
             warning_count += 1
         mon_time_remaining = mon_countdown - (time.time() - count_time)
 
@@ -446,9 +437,7 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
             break
         # 下播后没继播了，sleep到时间段过去，结束。如果需要下播后继续监测直到时间段过去，则删掉这个if块
         if interruption_prob is True and rec_triggered is False:
-            print('确实播完了')
             mon_time_remaining = int(mon_time_remaining)
-            # print(f'等待{mon_time_remaining}s结束')
             if mon_time_remaining > 120:
                 for i in range(mon_time_remaining // 120):
                     time.sleep(120)
@@ -465,14 +454,13 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
             # ffmpeg调用命令返回时间很大概率比实际播放结束时间晚3秒-2分钟，所以设置短点
             tmp_mon_interval = 30
             interruption_prob = True
-            # print('检测是否重新开播')
 
         if loop_time:
-            print(
-                f"{author_name} 检测直播间循环等待 {tmp_mon_interval}秒 {time.strftime('%m-%d %H:%M:%S', time.localtime())}")
+            logger.info(
+                f"【扫描】{author_name} 检测直播间循环等待 {tmp_mon_interval}秒")
         time.sleep(tmp_mon_interval)
     monitoring.discard(url_params[1])
-    print(f"[{author_name}] 结束监控@{time.strftime('%m-%d %H:%M:%S', time.localtime())}")
+    logger.info(f"【扫描】{author_name} 结束监控")
 
 
 def check_ffmpeg_existence():
@@ -480,16 +468,15 @@ def check_ffmpeg_existence():
     try:
         subprocess.run(['ffmpeg', '--help'], stdout=dev_null, stderr=dev_null, check=True)
     except subprocess.CalledProcessError as e:
-        logger.error(e)
+        logger.error(f'【ffmpeg】测试调用ffmepg --help出错，检查环境配置。{e}')
         return False
     except FileNotFoundError:
         ffmpeg_file_check = subprocess.getoutput(ffmpeg_path)
         if ffmpeg_file_check.find("run") > -1 and os.path.isfile(ffmpeg_path):
             os.environ['PATH'] += os.pathsep + os.path.dirname(os.path.abspath(ffmpeg_path))
-            # print(f"已将ffmpeg路径添加到环境变量：{ffmpeg_path}")
             return True
         else:
-            logger.error("检测到ffmpeg不存在,请将ffmpeg.exe放到同目录,或者设置为环境变量,没有ffmpeg将无法录制")
+            logger.error("【ffmpeg】命令行监测不到ffmpeg，退出")
             sys.exit(0)
     finally:
         dev_null.close()
@@ -531,7 +518,7 @@ def url_split(line: str):
     # url,author_name,W(eekday)/H(oliday),scan_interval(s),11:00-13:00,14:30-16:00,19:00-23:50
     line_list = re.split(r'[,，]', line)
     if len(line_list) < 5:
-        logger.error(f'[URLconfig.ini参数不足，跳过]{line}')
+        logger.error(f'【URLconfig.ini】参数不足，跳过{line}')
         return None
     url = line_list[0]
     if ('http://' not in url) and ('https://' not in url):
@@ -539,32 +526,32 @@ def url_split(line: str):
     author_name = line_list[1]
     dow_tag = str(line_list[2].lower().strip())
     if not line_list[3].isdigit():
-        logger.error(f'[URLconfig.ini扫描间隔不是数字，跳过]{line}')
+        logger.error(f'【URLconfig.ini】扫描间隔不是数字，跳过{line}')
         return None
     interval = int(line_list[3])
     if dow_tag not in {'h', 'w'}:
-        logger.error(f'[URLconfig.ini HW参数错误，跳过]{line}')
+        logger.error(f'【URLconfig.ini】HW参数错误，跳过{line}')
         return None
     ts_list = []
     for ts_span in line_list[4:]:
         ts_span = ts_span.split('-')
         if len(ts_span) != 2 or '' in ts_span:
-            print(f'{author_name}[{ts_span}]时间段格式错误，跳过')
+            logger.error(f'【URLconfig.ini】{author_name}[{ts_span}]时间段格式错误，跳过')
             continue
         ts_start = _sec_since_midnight(ts_span[0])
         if ts_start < 0:
-            print(f'{author_name}[{ts_start}]时间格式错误，跳过')
+            logger.error(f'【URLconfig.ini】{author_name}[{ts_start}]时间格式错误，跳过')
             continue
         ts_end = _sec_since_midnight(ts_span[1])
         if ts_end < 0:
-            print(f'{author_name}[{ts_end}]时间格式错误，跳过')
+            logger.error(f'【URLconfig.ini】{author_name}[{ts_end}]时间格式错误，跳过')
             continue
         if ts_end <= ts_start:
-            print(f'{author_name}[{ts_start}-{ts_end}]时间end<start?，跳过')
+            logger.error(f'【URLconfig.ini】{author_name}[{ts_start}-{ts_end}]时间end<start?，跳过')
             continue
         ts_list.append((ts_start, ts_end))
     if len(ts_list) == 0:
-        logger.error(f'[URLconfig.ini无法正常读到时间段，跳过]{line}')
+        logger.error(f'【URLconfig.ini】无法正常读到时间段，跳过。{line}')
         return None
     return url, author_name, dow_tag, interval, ts_list
 
@@ -579,13 +566,22 @@ def add_to_timeline(_dow_tag: str, _ts_key: tuple, _rec_par_val: list):
             monitor_timeline_w_record_params[_dow_tag][_ts_key].append(_rec_par_val)
 
 
+def get_latest_modified_err_log():
+    directory=os.path.split(os.path.realpath(sys.argv[0]))[0]+'/logs'
+    files = os.listdir(directory)
+    files.sort(key=lambda fn: os.path.getmtime(os.path.join(directory, fn)), reverse=True)
+    for fn in files:
+        if 'error' in fn:
+            return os.path.join(directory, fn)
+
+
 # --------------------------初始化程序-------------------------------------
-print("-----------------------------------------------------")
-print("|                   LiveRecorder                    |")
-print("-----------------------------------------------------")
-if not check_ffmpeg_existence():
-    logger.error("ffmpeg检查失败，程序将退出。")
-    sys.exit(1)
+logger.info("-----------------------------------------------------")
+logger.info("|                   LiveRecorder                    |")
+logger.info("-----------------------------------------------------")
+# if not check_ffmpeg_existence():
+#     logger.error("【ffmpeg】ffmpeg检查失败，程序将退出。")
+#     sys.exit(1)
 os.makedirs(os.path.dirname(config_file), exist_ok=True)
 options = {"是": True, "否": False}
 config = configparser.RawConfigParser()
@@ -602,7 +598,7 @@ try:
             if len(ini_URL_content) < 10:
                 raise EOFError("URL_config.ini为空")
 except OSError as err:
-    logger.error(f"发生 I/O 错误: {err}")
+    logger.error(f"【config.ini/URLconfig.ini】读ini发生IO错误: {err}")
 # 读取config.ini
 video_save_path = read_config_value(config, '录制设置', '直播保存路径（不填则默认）', "")
 folder_by_author = options.get(read_config_value(config, '录制设置', '保存文件夹是否以作者区分', "是"), False)
@@ -669,7 +665,7 @@ with open(url_config_file, "r", encoding=encoding, errors='ignore') as file:
                 add_to_timeline(_dow_tag=dow_tag, _ts_key=ts,
                                 _rec_par_val=[video_record_quality, url, author_name, mon_interval, None])
         else:
-            print(f"{url} 未知链接.此条跳过")
+            logger.error(f"【URLconfig.ini】{url} 未知链接.此条跳过")
             update_file(url_config_file, url, url, start_str='#')
 # 按开始时间从小到大排序
 for dow_tag in monitor_timeline_w_record_params:
@@ -679,7 +675,7 @@ for dow_tag in monitor_timeline_w_record_params:
 # 根据monitor_timeline_w_record_params跑无限循环并在对应的dow_tag、scan_time_span内、且不在monitoring中时开启monitor线程，
 # 线程内外根据monitoring(key=url)、recording(key=(author_name,rec_start_time))两个变量通讯，前者让无限循环内不要开启重复线程，同时两者用来在display_info中报数
 
-print('读取的时间线是', monitor_timeline_w_record_params)
+logger.info(f'读取的时间线是{monitor_timeline_w_record_params}')
 # 显示信息切片、根据报错量更改同时扫描的直播间数量
 threading.Thread(target=display_info, args=(display_interval,), daemon=True).start()
 threading.Thread(target=change_max_connect, args=(), daemon=True).start()
@@ -687,7 +683,11 @@ threading.Thread(target=change_max_connect, args=(), daemon=True).start()
 datetime_today = date.today()
 today_timeline = monitor_timeline_w_record_params[
     'h' if is_holiday(datetime_today) or not is_workday(datetime_today) else 'w']
-
+e_fn=get_latest_modified_err_log()
+err_lines=0
+if e_fn:
+    with open(e_fn, 'r',encoding='utf-8-sig',errors='ignore')as f:
+        err_lines=len(f.readlines())
 while True:
     # 跨日重读timeline
     if date.today() != datetime_today:
@@ -707,7 +707,15 @@ while True:
                     t = threading.Thread(target=start_monitor_n_record, args=[url_param, monitoring],
                                          daemon=True)
                     t.start()
-
         time.sleep(2)
-
     time.sleep(60)
+    # 如果error.log增多则推送报警
+    e_fn = get_latest_modified_err_log()
+    if e_fn:
+        with open(e_fn, 'r',encoding='utf-8-sig',errors='ignore') as f:
+            new_err_lines = len(f.readlines())
+        if new_err_lines>err_lines:
+            push_message(f'【liveRecorder】报错新增{new_err_lines-err_lines}条')
+        elif new_err_lines<err_lines:
+            push_message(f'【liveRecorder】报错新增{new_err_lines}条')
+        err_lines=new_err_lines
