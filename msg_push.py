@@ -20,9 +20,9 @@ headers: Dict[str, str] = {'Content-Type': 'application/json'}
 
 
 @trace_error_decorator
-def xizhi(url: str, content: str) -> Dict[str, Any]:
+def xizhi(url: str, content: str, title: str) -> Dict[str, Any]:
     json_data = {
-        'title': '直播间状态更新',
+        'title': title,
         'content': content
     }
     data = json.dumps(json_data).encode('utf-8')
@@ -33,11 +33,3 @@ def xizhi(url: str, content: str) -> Dict[str, Any]:
     return json_data
 
 
-if __name__ == '__main__':
-    content = '张三 开播了！'  # 推送内容
-
-    # 微信推送通知
-    # 替换成自己的单点推送接口,获取地址：https://xz.qqoq.net/#/admin/one
-    # 当然也可以使用其他平台API 如server酱 使用方法一样
-    xizhi_api = 'https://xizhi.qqoq.net/XZ2fc9ac41ace770f98a07580a6533e300.send'
-    xizhi(xizhi_api, content)
