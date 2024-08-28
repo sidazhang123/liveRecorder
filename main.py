@@ -230,11 +230,11 @@ def get_stream_url(json_data: dict, video_quality: str, url_type: str = 'm3u8', 
     return data
 
 
-def push_message(content: str) -> Union[str, list]:
+def push_message(content: str,title='直播间状态更新') -> Union[str, list]:
     push_pts = []
     if '微信' in live_status_push:
         push_pts.append('微信')
-        xizhi(xizhi_api_url, content)
+        xizhi(xizhi_api_url, content,title)
     push_pts = '、'.join(push_pts) if len(push_pts) > 0 else []
     return push_pts
 
@@ -419,14 +419,14 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
                 try:
                     ffmpeg_command.extend(command)
                     _output = subprocess.check_output(ffmpeg_command, stderr=subprocess.STDOUT)
-                    rec_triggered = True
-                    interruption_prob = False
                     logger.info(f"【录像】{author_name} 直播录制完成")
-                    recording.discard(rec_name_time)
                 except subprocess.CalledProcessError as e:
                     logger.error(
                         f"【录像】{author_name} 直播录制出错\n{e} 发生错误的行数: {e.__traceback__.tb_lineno}")
                     warning_count += 1
+                rec_triggered = True
+                interruption_prob = False
+                recording.discard(rec_name_time)
         except Exception as e:
             logger.error(f"【错误信息】{e} 发生错误的行数: {e.__traceback__.tb_lineno}")
             warning_count += 1
@@ -715,7 +715,7 @@ while True:
         with open(e_fn, 'r',encoding='utf-8-sig',errors='ignore') as f:
             new_err_lines = len(f.readlines())
         if new_err_lines>err_lines:
-            push_message(f'【liveRecorder】报错新增{new_err_lines-err_lines}条')
+            push_message(f'【liveRecorder】报错新增{new_err_lines-err_lines}条',title='报错！！')
         elif new_err_lines<err_lines:
-            push_message(f'【liveRecorder】报错新增{new_err_lines}条')
+            push_message(f'【liveRecorder】报错新增{new_err_lines}条',title='报错！！')
         err_lines=new_err_lines
