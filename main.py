@@ -126,6 +126,7 @@ def update_file(file_path: str, old_str: str, new_str: str, start_str: str = Non
             f.write(file_data)
 
 
+#只在分段录mp4时用，要在录制后加这个再转一遍
 def converts_mp4(address: str):
     if ts_to_mp4:
         _output = subprocess.check_output([
@@ -205,7 +206,7 @@ def get_douyin_stream_url(json_data: dict, video_quality: str) -> Dict[str, Any]
 @trace_error_decorator
 def get_stream_url(json_data: dict, video_quality: str, url_type: str = 'm3u8', spec: bool = False,
                    extra_key: Union[str, int] = None) -> Dict[str, Any]:
-    if not json_data['is_live']:
+    if 'is_live' not in json_data or not json_data['is_live']:
         return json_data
 
     play_url_list = json_data['play_url_list']
@@ -263,9 +264,13 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
                     port_info = get_kuaishou_stream_url(eid=record_url.split('?')[0].split('/')[-1])
             elif 'weibo.com' in record_url:
                 platform = '微博直播'
+                with open(f'{script_path}/config/weibo_cookie.txt',encoding='utf-8')as f:
+                    weibo_cookie = f.read()
                 with semaphore:
                     json_data = get_weibo_stream_data(
                         url=record_url, cookies=weibo_cookie)
+                    if not json_data:
+                        raise Exception(f'{author_name}报通行证了，更换微博cookie')
                     port_info = get_stream_url(json_data, record_quality, extra_key='m3u8_url')
             else:
                 logger.error(f'【URLconfig.ini】{record_url} 未知直播地址')
@@ -280,10 +285,10 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
             if port_info['is_live'] is False:
                 logger.info(f"【扫描】{author_name} 未开播，等待中... ")
                 if start_pushed and over_show_push:
-                    push_content = f"直播间状态更新：[直播间名称] 直播已结束！时间：[时间]"
+                    push_content = f"[直播间名称] 已结束！时间：[时间]"
                     push_content = push_content.replace('[直播间名称]', author_name).replace('[时间]',
                                                                                              push_at)
-                    push_pts = push_message(push_content.replace(r'\n', '\n'))
+                    push_pts = push_message(title=push_content.replace(r'\n', '\n'),content=push_content.replace(r'\n', '\n'))
                     if push_pts:
                         logger.info(f'【推送】已推送[{author_name}]下播状态')
                 start_pushed = False
@@ -291,10 +296,10 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
                 logger.info(f"【扫描】{author_name} 开播啦 ")
                 if live_status_push and not start_pushed:
                     if begin_show_push:
-                        push_content = f"直播间状态更新：[直播间名称] 正在直播中，时间：[时间]"
+                        push_content = f"[直播间名称] 直播中，时间：[时间]"
                         push_content = push_content.replace('[直播间名称]', author_name).replace('[时间]',
                                                                                                  push_at)
-                        push_pts = push_message(push_content.replace(r'\n', '\n'))
+                        push_pts = push_message(title=push_content.replace(r'\n', '\n'),content=push_content.replace(r'\n', '\n'))
                         if push_pts:
                             logger.info(f'【推送】已推送[{author_name}]开播状态')
                     start_pushed = True
@@ -305,7 +310,7 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
                 if len(real_url) == 0:
                     raise Exception(f'{author_name}返回串流地址为空。')
                 # 录像保存路径
-                full_path = f'{default_path}/{platform}'
+                full_path = f'{default_path}'
                 # 剔除不合规字符以用于保存路径
                 author_name = re.sub(rstr, "_", author_name)
                 # 文件系统中创建保存路径
@@ -387,7 +392,7 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
                             "-segment_time", split_time,
                             "-segment_format", 'mpegts',
                             "-reset_timestamps", "1",
-                            f"{full_path}/{author_name}_{now}_%03d.{'mp3' if ts_to_mp3 else 'ts'}",
+                            f"{full_path}/{author_name}_{now}_%03d.ts",
                         ]
                     else:
                         command = [
@@ -395,6 +400,24 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
                             "-c:a", "copy",
                             "-f", "mpegts",
                             f"{full_path}/{author_name}_{now}.ts"
+                        ]
+                elif video_save_type == "MP3":
+                    if split_video_by_time:
+                        command = [
+                            "-map", "0:a",
+                            "-c:a", "libmp3lame",
+                            "-ab", "64k",
+                            "-f", "segment",
+                            "-segment_time", split_time,
+                            "-reset_timestamps", "1",
+                            f"{full_path}/{author_name}_{now}_%03d.mp3",
+                        ]
+                    else:
+                        command = [
+                            "-map", "0:a",
+                            "-c:a", "libmp3lame",
+                            "-ab", "64k",
+                            f"{full_path}/{author_name}_{now}.mp3",
                         ]
                 else:
                     if split_video_by_time:
@@ -436,13 +459,13 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
         if rec_triggered is False and mon_time_remaining <= 0:
             break
         # 下播后没继播了，sleep到时间段过去，结束。如果需要下播后继续监测直到时间段过去，则删掉这个if块
-        if interruption_prob is True and rec_triggered is False:
-            mon_time_remaining = int(mon_time_remaining)
-            if mon_time_remaining > 120:
-                for i in range(mon_time_remaining // 120):
-                    time.sleep(120)
-            time.sleep(mon_time_remaining % 120 if mon_time_remaining > 0 else 0)
-            break
+#        if interruption_prob is True and rec_triggered is False:
+#            mon_time_remaining = int(mon_time_remaining)
+#            if mon_time_remaining > 120:
+#                for i in range(mon_time_remaining // 120):
+#                    time.sleep(120)
+#            time.sleep(mon_time_remaining % 120 if mon_time_remaining > 0 else 0)
+#            break
         # if interruption_prob is True and rec_triggered is True:
         #     print('主播重新上线')
         tmp_mon_interval = mon_interval
@@ -506,7 +529,7 @@ def _sec_since_midnight(ts=None) -> float:
     now = datetime.now()
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
     if ts:
-        ts_list = re.split(r'[：:]', ts.strip().lstrip('0'))
+        ts_list = re.split(r'[：:]', ts.strip())
         if len(ts_list) != 2 or '' in ts_list:
             return -1
         now = now.replace(hour=int(ts_list[0]), minute=int(ts_list[1]), second=0, microsecond=0)
@@ -540,11 +563,11 @@ def url_split(line: str):
             continue
         ts_start = _sec_since_midnight(ts_span[0])
         if ts_start < 0:
-            logger.error(f'【URLconfig.ini】{author_name}[{ts_start}]时间格式错误，跳过')
+            logger.error(f'【URLconfig.ini】{author_name}[{ts_start}]start时间格式错误，跳过')
             continue
         ts_end = _sec_since_midnight(ts_span[1])
         if ts_end < 0:
-            logger.error(f'【URLconfig.ini】{author_name}[{ts_end}]时间格式错误，跳过')
+            logger.error(f'【URLconfig.ini】{author_name}[{ts_end}]end时间格式错误，跳过')
             continue
         if ts_end <= ts_start:
             logger.error(f'【URLconfig.ini】{author_name}[{ts_start}-{ts_end}]时间end<start?，跳过')
@@ -574,6 +597,7 @@ def get_latest_modified_err_log():
         if 'error' in fn:
             return os.path.join(directory, fn)
 
+    
 
 # --------------------------初始化程序-------------------------------------
 logger.info("-----------------------------------------------------")
@@ -602,7 +626,7 @@ except OSError as err:
 # 读取config.ini
 video_save_path = read_config_value(config, '录制设置', '直播保存路径（不填则默认）', "")
 folder_by_author = options.get(read_config_value(config, '录制设置', '保存文件夹是否以作者区分', "是"), False)
-video_save_type = read_config_value(config, '录制设置', '视频保存格式ts|mp4|ts音频', "ts")
+video_save_type = read_config_value(config, '录制设置', '视频保存格式ts|mp4|ts音频|mp3', "ts")
 video_record_quality = read_config_value(config, '录制设置', '原画|超清|高清|标清|流畅', "原画")
 if video_record_quality not in ["原画", "蓝光", "超清", "高清", "标清", "流畅"]:
     video_record_quality = '原画'
@@ -620,14 +644,16 @@ xizhi_api_url = read_config_value(config, '推送配置', '微信推送接口链
 begin_show_push = options.get(read_config_value(config, '推送配置', '开播推送开启（是/否）', "是"), True)
 over_show_push = options.get(read_config_value(config, '推送配置', '关播推送开启（是/否）', "否"), False)
 dy_cookie = read_config_value(config, 'Cookie', '抖音cookie(录制抖音必须要有)', '')
-# ks_cookie = read_config_value(config, 'Cookie', '快手cookie', '')
-weibo_cookie = read_config_value(config, 'Cookie', 'weibo_cookie', '')
+with open(f'{script_path}/config/weibo_cookie.txt',encoding='utf-8')as f:
+    weibo_cookie = f.read()
 
 if len(video_save_type) > 0:
     if video_save_type.upper().lower() == "MP4".lower():
         video_save_type = "MP4"
     elif video_save_type.upper().lower() == "TS音频".lower():
         video_save_type = "TS音频"
+    elif video_save_type.upper().lower() == "MP3".lower():
+        video_save_type = "MP3"
     else:
         video_save_type = "TS"
 else:
@@ -713,9 +739,10 @@ while True:
     e_fn = get_latest_modified_err_log()
     if e_fn:
         with open(e_fn, 'r',encoding='utf-8-sig',errors='ignore') as f:
-            new_err_lines = len(f.readlines())
+            err_f_lines=f.readlines()
+            new_err_lines = len(err_f_lines)
         if new_err_lines>err_lines:
-            push_message(f'【liveRecorder】报错新增{new_err_lines-err_lines}条',title='报错！！')
+            push_message('\n'.join(err_f_lines[-(new_err_lines-err_lines):]),title=f'报错新增{new_err_lines-err_lines}条')
         elif new_err_lines<err_lines:
-            push_message(f'【liveRecorder】报错新增{new_err_lines}条',title='报错！！')
+            push_message('\n'.join(err_f_lines[-new_err_lines:]),title=f'报错新增{new_err_lines}条')
         err_lines=new_err_lines
