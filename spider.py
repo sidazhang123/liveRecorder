@@ -263,7 +263,7 @@ def get_kuaishou_stream_url(eid):
     playList = json_data.get('liveroom', {}).get('playList', [None])[-1]
     if not playList:
         ks_retry += 1
-        logger.error('【ks】eid={eid},json->liveroom->playList失败')
+        logger.error(f'【ks】eid={eid},json->liveroom->playList失败')
         time.sleep(ks_retry * 5 + ks_retry_wait_time)
         return get_kuaishou_stream_url(eid)
     # 获取anchor_name
@@ -272,6 +272,7 @@ def get_kuaishou_stream_url(eid):
 
     # 获取playUrls
     playUrls = playList.get('liveStream', {}).get('playUrls', [])
+    playUrls = sorted([playUrls.get('h264', {}), playUrls.get('hevc', {})], key=lambda i: len(i), reverse=True)[0]
     if len(playUrls) == 0:
         return {
             "anchor_name": anchor_name,
@@ -281,7 +282,7 @@ def get_kuaishou_stream_url(eid):
     repr = playUrls[0].get('adaptationSet', {}).get('representation', [])
     if len(repr) == 0:
         ks_retry += 1
-        logger.error('【ks】eid={eid},representation列表为空或获取异常')
+        logger.error(f'【ks】eid={eid},representation列表为空或获取异常')
         time.sleep(ks_retry * 5 + ks_retry_wait_time)
         return get_kuaishou_stream_url(eid)
     stream_url = repr[0].get('url', '')
