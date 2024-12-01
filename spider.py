@@ -271,7 +271,7 @@ def get_kuaishou_stream_url(eid):
     anchor_name = re.sub(r'[^\u4e00-\u9fa5a-zA-Z]', '', anchor_name)
 
     # 获取playUrls
-    playUrls = playList.get('liveStream', {}).get('playUrls', [])
+    playUrls = playList.get('liveStream', {}).get('playUrls', {})
     playUrls = sorted([playUrls.get('h264', {}), playUrls.get('hevc', {})], key=lambda i: len(i), reverse=True)[0]
     if len(playUrls) == 0:
         return {
