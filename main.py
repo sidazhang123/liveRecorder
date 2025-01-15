@@ -126,7 +126,6 @@ def update_file(file_path: str, old_str: str, new_str: str, start_str: str = Non
             f.write(file_data)
 
 
-#只在分段录mp4时用，要在录制后加这个再转一遍
 def converts_mp4(address: str):
     if ts_to_mp4:
         _output = subprocess.check_output([

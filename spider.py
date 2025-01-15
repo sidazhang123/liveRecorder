@@ -23,7 +23,8 @@ ssl_context.check_hostname = False
 ssl_context.verify_mode = ssl.CERT_NONE
 ks_retry = 0
 ks_retry_wait_time = 10
-
+ks_slow_start=False
+ks_err_log=''
 
 def get_req(
         url: str,
@@ -212,12 +213,16 @@ def get_douyin_stream_data(url: str, proxy_addr: Union[str, None] = None, cookie
 
 @trace_error_decorator
 def get_kuaishou_stream_url(eid):
-    global ks_retry
+    global ks_retry,ks_slow_start,ks_err_log
     if ks_retry > 2:
-        logger.error('【ks】{eid} 快手重试3次依然出错')
         ks_retry = 0
-        return None
-    co = ChromiumOptions().headless()
+        ks_err_log=''
+        raise Exception('ks试了3次还出错:'+ks_err_log)
+
+    while ks_slow_start is True:
+        time.sleep(20)
+    ks_slow_start=True
+    co = ChromiumOptions().auto_port().headless()
     co.set_argument('--blink-settings=imagesEnabled=false')  # 禁用加载图片
     co.set_argument('--disable-gpu')
     co.set_argument("--disable-blink-features=AutomationControlled")
@@ -227,15 +232,15 @@ def get_kuaishou_stream_url(eid):
     co.incognito(True)
     page = ChromiumPage(addr_or_opts=co)
     page.listen.start('live.kuaishou.com/u/')
-    time.sleep(3)
     page.get('https://live.kuaishou.com')
+    time.sleep(3)
     player_container = page.ele('@class=kwai-player-container-video')
     page.actions.move_to(player_container.rect.midpoint)
-    time.sleep(1)
+    time.sleep(2)
     page.actions.move_to('进入直播间').click()
     for _ in range(3):
         page.actions.scroll(1)
-        time.sleep(1)
+        time.sleep(2)
 
     # 获取页面源代码
 
@@ -246,9 +251,12 @@ def get_kuaishou_stream_url(eid):
     match = pattern.search(page_source)
     page.close()
     page.quit()
+    ks_slow_start=False
     if not match:
+        page.close()
+        page.quit()
         ks_retry += 1
-        logger.error(f'【ks】eid={eid},html中无法找到json')
+        ks_err_log+=f'【ks】eid={eid},html中无法找到json'
         time.sleep(ks_retry * 5 + ks_retry_wait_time)
         return get_kuaishou_stream_url(eid)
     # 获取匹配的 JSON 数据
@@ -262,8 +270,10 @@ def get_kuaishou_stream_url(eid):
 
     playList = json_data.get('liveroom', {}).get('playList', [None])[-1]
     if not playList:
+        page.close()
+        page.quit()
         ks_retry += 1
-        logger.error('【ks】eid={eid},json->liveroom->playList失败')
+        ks_err_log+=f'【ks】eid={eid},json->liveroom->playList失败'
         time.sleep(ks_retry * 5 + ks_retry_wait_time)
         return get_kuaishou_stream_url(eid)
     # 获取anchor_name
@@ -271,17 +281,18 @@ def get_kuaishou_stream_url(eid):
     anchor_name = re.sub(r'[^\u4e00-\u9fa5a-zA-Z]', '', anchor_name)
 
     # 获取playUrls
-    playUrls = playList.get('liveStream', {}).get('playUrls', [])
+    playUrls = playList.get('liveStream', {}).get('playUrls', {})
+    playUrls = sorted([playUrls.get('h264', {}), playUrls.get('hevc', {})], key=lambda i: len(i), reverse=True)[0]
     if len(playUrls) == 0:
         return {
             "anchor_name": anchor_name,
             "is_live": False,
             "record_url": ''
         }
-    repr = playUrls[0].get('adaptationSet', {}).get('representation', [])
+    repr = playUrls.get('adaptationSet', {}).get('representation', [])
     if len(repr) == 0:
         ks_retry += 1
-        logger.error('【ks】eid={eid},representation列表为空或获取异常')
+        ks_err_log+=f'【ks】eid={eid},representation列表为空或获取异常'
         time.sleep(ks_retry * 5 + ks_retry_wait_time)
         return get_kuaishou_stream_url(eid)
     stream_url = repr[0].get('url', '')
