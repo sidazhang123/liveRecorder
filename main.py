@@ -264,13 +264,23 @@ def start_monitor_n_record(url_params: list, monitoring_set: ThreadSafeSet):
             elif 'weibo.com' in record_url:
                 platform = '微博直播'
                 with open(f'{script_path}/config/weibo_cookie.txt',encoding='utf-8')as f:
-                    weibo_cookie = f.read()
+                    weibo_cookies = f.readlines()
                 with semaphore:
-                    json_data = get_weibo_stream_data(
-                        url=record_url, cookies=weibo_cookie)
+                    del_ck_ind=-1
+                    for ck_ind,ck in enumerate(weibo_cookies):
+                        json_data = get_weibo_stream_data(
+                            url=record_url, cookies=ck)
+                        if not json_data:
+                            del_ck_ind=ck_ind
+                            time.sleep(1)
+                        else:
+                            port_info = get_stream_url(json_data, record_quality, extra_key='m3u8_url')
+                            break
+                    if del_ck_ind>-1:
+                        with open(f'{script_path}/config/weibo_cookie.txt', 'w', encoding='utf-8') as file:
+                            file.writelines(weibo_cookies[del_ck_ind+1:])
                     if not json_data:
-                        raise Exception(f'{author_name}报通行证了，更换微博cookie')
-                    port_info = get_stream_url(json_data, record_quality, extra_key='m3u8_url')
+                        raise Exception(f'微博cookie全部失效了')
             else:
                 logger.error(f'【URLconfig.ini】{record_url} 未知直播地址')
                 monitoring_set.discard(record_url)

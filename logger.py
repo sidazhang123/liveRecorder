@@ -10,8 +10,8 @@ logger.add(
     format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}",
     serialize=False,
     enqueue=True,
-    retention="10 days",
-    rotation="700 KB",
+    retention="7 days",
+    rotation="500 KB",
 )
 
 logger.add(
@@ -20,6 +20,6 @@ logger.add(
     serialize=False,
     format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}",
     enqueue=False,
-    retention="10 days",
-    rotation="500 KB",
+    retention="7 days",
+    rotation="200 KB",
 )

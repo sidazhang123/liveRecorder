@@ -8,6 +8,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from json import JSONDecodeError
 from typing import Union, Dict, Any
 
 import requests
@@ -322,7 +323,10 @@ def get_weibo_stream_data(url: str, proxy_addr: Union[str, None] = None, cookies
         uid = url.split('?')[0].rsplit('/u/', maxsplit=1)[1]
         web_api = f'https://weibo.com/ajax/statuses/mymblog?uid={uid}&page=1&feature=0'
         json_str = get_req(web_api, proxy_addr=proxy_addr, headers=headers)
-        json_data = json.loads(json_str)
+        try:
+            json_data = json.loads(json_str)
+        except JSONDecodeError:
+            return None
         for i in json_data['data']['list']:
             if 'page_info' in i and i['page_info']['object_type'] == 'live':
                 room_id = i['page_info']['object_id']
@@ -336,8 +340,10 @@ def get_weibo_stream_data(url: str, proxy_addr: Union[str, None] = None, cookies
         app_api = f'https://weibo.com/l/pc/anchor/live?live_id={room_id}'
         # app_api = f'https://weibo.com/l/!/2/wblive/room/show_pc_live.json?live_id={room_id}'
         json_str = get_req(url=app_api, proxy_addr=proxy_addr, headers=headers)
-        json_data = json.loads(json_str)
-
+        try:
+            json_data = json.loads(json_str)
+        except JSONDecodeError:
+            return None
         anchor_name = json_data['data']['user_info']['name']
         result["anchor_name"] = anchor_name
         live_status = json_data['data']['item']['status']
