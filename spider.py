@@ -8,11 +8,14 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import numpy as np
+import random
+import cv2
 from json import JSONDecodeError
 from typing import Union, Dict, Any
 
 import requests
-from DrissionPage import ChromiumPage, ChromiumOptions
+from DrissionPage import ChromiumOptions, Chromium
 
 from utils import trace_error_decorator, logger
 from web_rid import get_sec_user_id
@@ -24,8 +27,9 @@ ssl_context.check_hostname = False
 ssl_context.verify_mode = ssl.CERT_NONE
 ks_retry = 0
 ks_retry_wait_time = 10
-ks_slow_start=False
-ks_err_log=''
+ks_slow_start = False
+ks_err_log = ''
+
 
 def get_req(
         url: str,
@@ -213,51 +217,155 @@ def get_douyin_stream_data(url: str, proxy_addr: Union[str, None] = None, cookie
 
 
 @trace_error_decorator
+def identify_gap(bg, cut, bg_disp_width):
+    # 参考https://hyb.life/archives/197
+    # 但根据经验，对于近一半的ks图片来说有复杂区域使得matchTemplate误判（会match到x<100的点）
+    # 同时根据经验移动的距离基本都在200左右(+-20)，所以找3个最可能的点里x>150的，来大幅增加命中概率
+    # 读取背景图片和缺口图片
+    bg_img = cv2.imread(bg)  # 背景图片
+    _, bg_actual_width, _ = bg_img.shape
+    cut_img = cv2.imread(cut)  # 缺口图片
+    # 识别图片边缘
+    bg_edge = cv2.Canny(bg_img, 100, 200)
+    cut_edge = cv2.Canny(cut_img, 100, 200)
+    # 转换图片格式
+    bg_pic = cv2.cvtColor(bg_edge, cv2.COLOR_GRAY2RGB)
+    cut_pic = cv2.cvtColor(cut_edge, cv2.COLOR_GRAY2RGB)
+    # 边缘匹配
+    matrix = cv2.matchTemplate(bg_pic, cut_pic, cv2.TM_CCOEFF_NORMED)
+    matrix_copy = matrix.copy()
+    # 从匹配度前三的点里随便选一个符合规范的
+    top_values = []
+    top_locs = []
+
+    for _ in range(3):  # 找到前三个最大值
+        (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(matrix_copy)
+        top_values.append(maxVal)
+        top_locs.append(maxLoc)
+        matrix_copy[maxLoc[1], maxLoc[0]] = -999  # 假设不会出现
+    # min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(matrix)  # 寻找最优匹配
+    for i in [coor[0] * bg_disp_width / bg_actual_width for coor in top_locs]:
+        if i > 150:
+            return i
+    return None
+
+
+def ease_out_quad(x):
+    return 1 - (1 - x) * (1 - x)
+
+
+def ease_out_quart(x):
+    return 1 - pow(1 - x, 4)
+
+
+def ease_out_expo(x):
+    if x == 1:
+        return 1
+    else:
+        return 1 - pow(2, -10 * x)
+
+
+@trace_error_decorator
+def get_tracks_2(distance, seconds=1, ease_func=ease_out_quart):
+    # 根据轨迹离散分布生成的数学 生成  # 参考文档  https://www.jianshu.com/p/3f968958af5a
+    # ks这里x轴不需要回退的假动作，但它上传的轨迹会记录y。所以在移动时对y方向加randint(-5,5)
+    tracks = [0]
+    offsets = [0]
+    for t in np.arange(0.0, seconds, 0.1):
+        ease = ease_func
+        offset = round(ease(t / seconds) * distance)
+        tracks.append(offset - offsets[-1])
+        offsets.append(offset)
+    return tracks
+
+
+@trace_error_decorator
+def dl_img(name, image_url):
+    response = requests.get(image_url)
+    if response.status_code == 200:
+        with open(name, 'wb') as f:
+            f.write(response.content)
+
+
+@trace_error_decorator
 def get_kuaishou_stream_url(eid):
-    global ks_retry,ks_slow_start,ks_err_log
+    global ks_retry, ks_slow_start, ks_err_log
     if ks_retry > 2:
         ks_retry = 0
-        ks_err_log=''
-        raise Exception('ks试了3次还出错:'+ks_err_log)
+        ks_err_log = ''
+        raise Exception('ks试了3次还出错:' + ks_err_log)
 
     while ks_slow_start is True:
         time.sleep(20)
-    ks_slow_start=True
+    ks_slow_start = True
     co = ChromiumOptions().auto_port().headless()
-    co.set_argument('--blink-settings=imagesEnabled=false')  # 禁用加载图片
+    # 将chrome://version中用户文件复制一份,chmod -R,使用google-chrome --user-data-dir="kwai_user_profile"通过x11打开浏览器，手动登录ks，下次再访问时可维持登陆状态
+    co.set_user_data_path('kwai_user_profile')
+    co.set_argument('--blink-settings=imagesEnabled=true')  # 必须加载图片过验证码
     co.set_argument('--disable-gpu')
+    co.set_argument('--no-sandbox')
     co.set_argument("--disable-blink-features=AutomationControlled")
-    co.set_user_agent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36')
-    co.set_argument('--charset=UTF-8')  # 设置编码为 UTF-8
-    co.incognito(True)
-    page = ChromiumPage(addr_or_opts=co)
+    co.set_argument('--charset=UTF-8')
+    co.incognito(False)
+    page = Chromium(addr_or_opts=co).latest_tab
+
     page.listen.start('live.kuaishou.com/u/')
     page.get('https://live.kuaishou.com')
     time.sleep(3)
+
     player_container = page.ele('@class=kwai-player-container-video')
     page.actions.move_to(player_container.rect.midpoint)
     time.sleep(2)
     page.actions.move_to('进入直播间').click()
+    time.sleep(5)
+    # 验证码仅会在进入直播间时出，以下仅可过滑块
+    if '<iframe' in page.html:
+        bg = 'bg-img.png'
+        slider = 'slider-img.png'
+        iframe = page.get_frame(1)
+        container = iframe('@class:image-container')
+        slider_btn = iframe('@class=slider-btn')
+        disp_width = float(container.style('width').replace('px', '').strip())
+        bg_img_ele = iframe('@class=bg-img')
+        dl_img(bg, bg_img_ele.attr("src"))
+
+        slider_ele = iframe('@class=slider-img')
+        slide_offset = float(slider_ele.style('left').replace('px', '').strip())
+        dl_img(slider, slider_ele.attr("src"))
+
+        print(f'display_width:{disp_width},slide_offset:{slide_offset}')
+        distance = round(identify_gap(bg, slider, disp_width) - slide_offset)
+        track = get_tracks_2(distance, 1, ease_out_quad)
+        print(f'在页面上x轴实际要拖动：{distance}')
+        print('track', track)
+        page.actions.hold(slider_btn)
+        for t in track:
+            page.actions.move(t, random.randint(-5, 5))
+            time.sleep(0.01)
+        page.listen.start('kSecretApiVerify')
+        page.actions.release()
+        captcha_rsp = page.listen.wait()
+        captcha_res = captcha_rsp.response.body
+        if captcha_res['desc'] == 'ok':
+            print('验证成功')
+        print(captcha_res)
+    time.sleep(1)
     for _ in range(3):
         page.actions.scroll(1)
         time.sleep(2)
 
-    # 获取页面源代码
-
     page.get(f'https://live.kuaishou.com/u/{eid}')
     page_source = page.listen.wait().response.body
-    # 使用正则表达式提取"playList"中的数据
+    # 提取"playList"中的数据
     pattern = re.compile(r'window\.__INITIAL_STATE__=\s*({[^<]+?})\s*;', re.DOTALL)
     match = pattern.search(page_source)
-    page.close()
-    page.quit()
-    ks_slow_start=False
+
+    ks_slow_start = False
     if not match:
         page.close()
-        page.quit()
+
         ks_retry += 1
-        ks_err_log+=f'【ks】eid={eid},html中无法找到json'
+        ks_err_log += f'【ks】eid={eid},html中无法找到json'
         time.sleep(ks_retry * 5 + ks_retry_wait_time)
         return get_kuaishou_stream_url(eid)
     # 获取匹配的 JSON 数据
@@ -272,9 +380,9 @@ def get_kuaishou_stream_url(eid):
     playList = json_data.get('liveroom', {}).get('playList', [None])[-1]
     if not playList:
         page.close()
-        page.quit()
+
         ks_retry += 1
-        ks_err_log+=f'【ks】eid={eid},json->liveroom->playList失败'
+        ks_err_log += f'【ks】eid={eid},json->liveroom->playList失败'
         time.sleep(ks_retry * 5 + ks_retry_wait_time)
         return get_kuaishou_stream_url(eid)
     # 获取anchor_name
@@ -293,10 +401,11 @@ def get_kuaishou_stream_url(eid):
     repr = playUrls.get('adaptationSet', {}).get('representation', [])
     if len(repr) == 0:
         ks_retry += 1
-        ks_err_log+=f'【ks】eid={eid},representation列表为空或获取异常'
+        ks_err_log += f'【ks】eid={eid},representation列表为空或获取异常'
         time.sleep(ks_retry * 5 + ks_retry_wait_time)
         return get_kuaishou_stream_url(eid)
     stream_url = repr[0].get('url', '')
+    page.close()
 
     return {
         "anchor_name": anchor_name,
